@@ -17,7 +17,7 @@ features = ["H", "TWI", "Aspect", "Hillshade", "Roughness", "Slope",
             "Temperature_merra_1000hpa", "Time", "DayOfYear", "X", "Y"]
 target = "T_rp5"
 
-
+X = dataset[features].values
 y = dataset[target].values
 
 scaler = StandardScaler()
