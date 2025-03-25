@@ -24,6 +24,7 @@ X_scaled = scaler.fit_transform(X)
 
 X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
 
+# MLP-модель
 mlp_model = keras.Sequential([
     layers.Dense(128, activation="relu", input_shape=(X_train.shape[1],)),
     layers.Dense(64, activation="relu"),
@@ -33,15 +34,18 @@ mlp_model = keras.Sequential([
 
 mlp_model.compile(optimizer="adam", loss="mse", metrics=["mae"])
 
+# Обучаем модель и выводим метрики после каждой эпохи
 history = mlp_model.fit(X_train, y_train, epochs=100, batch_size=32, validation_data=(X_test, y_test), verbose=1)
 
+# Получаем предсказания
 predictions = mlp_model.predict(X_test)
 mse = mean_squared_error(y_test, predictions)
 r2 = r2_score(y_test, predictions)
 
-print(f"MSE: {mse:.4f}")
-print(f"R² Score: {r2:.4f}")
+print(f"Final MSE: {mse:.4f}")
+print(f"Final R² Score: {r2:.4f}")
 
+# Выводим графики потерь и MAE
 plt.figure(figsize=(12, 5))
 plt.subplot(1, 2, 1)
 plt.plot(history.history['loss'], label='Train Loss')
@@ -60,6 +64,7 @@ plt.title("График MAE модели")
 plt.legend()
 plt.show()
 
+# Сравнение предсказанных и реальных значений
 plt.figure(figsize=(6,6))
 sns.scatterplot(x=y_test, y=predictions.flatten(), alpha=0.5)
 plt.xlabel("Реальная температура")
