@@ -124,3 +124,6 @@ plt.title("R² vs Epochs, Batch Size and Learning Rate")
 plt.xlabel("Количество эпох")
 plt.ylabel("R²")
 plt.show()
+
+# Epochs,Batch Size,Neurons,Activation,Regularization,Optimizer,Learning Rate,MSE,R²,Time (s)
+# 300,32,"(128, 64, 32)",elu,,adam,0.001,5.928016250898253,0.8427897692039646,465.2867259979248

@@ -8,12 +8,13 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error, mean_absolute_percentage_error
 import tensorflow as tf
 from tensorflow import keras
-from tensorflow.keras import layers, callbacks
+from tensorflow.keras import layers, callbacks, regularizers
 from tensorflow.keras.mixed_precision import set_global_policy
 import concurrent.futures
 from tqdm import tqdm
 from datetime import datetime
 import random
+import itertools
 
 # ------------------------
 # CONFIG
@@ -44,39 +45,50 @@ X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, 
 # ------------------------
 # RANDOM HYPERPARAM SEARCH CONFIG
 # ------------------------
-epochs_options = [100, 200, 300]
+epochs_options = [200, 300, 400]
 batch_size_options = [32, 64, 128]
 neurons_options = [
     (64, 64),
-    (128, 64, 32),
-    (256, 128, 64),
-    (512, 256, 128),
+    (128, 128),
+    (64, 64, 32),
+    (128, 64),
+    (64, 32, 16)
 ]
-activation_options = ['relu', 'elu', 'tanh']
-dropout_options = [0.0, 0.2, 0.3]
-learning_rate_options = [0.01, 0.005, 0.001, 0.0005]
+activation_options = ['elu', 'relu', 'tanh', 'selu', 'leaky_relu']
+dropout_options = [0.0, 0.1, 0.2, 0.3]
+learning_rate_options = [0.001, 0.0005, 0.0001]
 batch_norm_options = [True, False]
+l2_reg_options = [0.0, 1e-4, 1e-3]
 
-all_combinations = [(e, b, n, a, d, l, bn)
-                    for e in epochs_options
-                    for b in batch_size_options
-                    for n in neurons_options
-                    for a in activation_options
-                    for d in dropout_options
-                    for l in learning_rate_options
-                    for bn in batch_norm_options]
+all_combinations = list(itertools.product(
+    epochs_options,
+    batch_size_options,
+    activation_options,
+    neurons_options,
+    dropout_options,
+    batch_norm_options,
+    l2_reg_options,
+    learning_rate_options
+))
 
 # Увеличим кол-во тестов
-sampled_combinations = random.sample(all_combinations, min(60, len(all_combinations)))
+sampled_combinations = random.sample(all_combinations, min(100, len(all_combinations)))
 
 # ------------------------
 # MODEL TRAINING
 # ------------------------
-def run_model(epochs, batch_size, neurons, activation, dropout_rate, learning_rate, batch_norm):
+def run_model(epochs, batch_size, activation, neurons, dropout_rate, batch_norm, l2_reg, learning_rate):
     model = keras.Sequential()
 
     for units in neurons:
-        model.add(layers.Dense(units, activation=activation))
+        # Выбор активации
+        if activation == 'leaky_relu':
+            model.add(layers.Dense(units, kernel_regularizer=regularizers.l2(l2_reg) if l2_reg > 0 else None))
+            model.add(layers.LeakyReLU())
+        else:
+            model.add(layers.Dense(units, activation=activation,
+                                   kernel_regularizer=regularizers.l2(l2_reg) if l2_reg > 0 else None))
+
         if batch_norm:
             model.add(layers.BatchNormalization())
         model.add(layers.Dropout(dropout_rate))
@@ -104,15 +116,16 @@ def run_model(epochs, batch_size, neurons, activation, dropout_rate, learning_ra
 
     return mse, rmse, mae, mape, r2
 
+
 # ------------------------
 # PARALLEL EXECUTION
 # ------------------------
 results = []
 
 def process_combination(params):
-    e, b, n, a, d, l, bn = params
-    metrics = run_model(e, b, n, a, d, l, bn)
-    return (e, b, n, a, d, l, bn, *metrics)
+    e, b, a, n, d, bn, l2, lr = params
+    metrics = run_model(e, b, a, n, d, bn, l2, lr)
+    return (e, b, a, n, d, bn, l2, lr, *metrics)
 
 with concurrent.futures.ThreadPoolExecutor() as executor:
     futures = [executor.submit(process_combination, params) for params in sampled_combinations]
@@ -122,8 +135,8 @@ with concurrent.futures.ThreadPoolExecutor() as executor:
 # ------------------------
 # SAVE AND PLOT RESULTS
 # ------------------------
-df_results = pd.DataFrame(results, columns=["Epochs", "Batch Size", "Neurons", "Activation",
-                                            "Dropout", "Learning Rate", "BatchNorm",
+df_results = pd.DataFrame(results, columns=["Epochs", "Batch Size", "Activation", "Neurons",
+                                            "Dropout", "BatchNorm", "L2", "Learning Rate",
                                             "MSE", "RMSE", "MAE", "MAPE", "R²"])
 df_results.sort_values(by="MSE", inplace=True)
 df_results.to_csv("mlp_res_10april_extended.csv", index=False)
@@ -143,6 +156,3 @@ plt.show()
 sns.scatterplot(x="MSE", y="R²", data=df_results)
 plt.title("MSE vs R²")
 plt.show()
-
-# Epochs,Batch Size,Neurons,Activation,Dropout,Learning Rate,BatchNorm,MSE,RMSE,MAE,MAPE,R²
-# 300,32,"(64, 64)",tanh,0.0,0.001,False,7.583741330960513,2.7538593520658443,2.092010613207547,0.11488630627729347,0.7988801524022344
