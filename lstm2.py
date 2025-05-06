@@ -8,12 +8,13 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error, mean_absolute_percentage_error
 import tensorflow as tf
 from tensorflow import keras
-from tensorflow.keras import layers, callbacks
+from tensorflow.keras import layers, callbacks, regularizers
 from tensorflow.keras.mixed_precision import set_global_policy
 import concurrent.futures
 from tqdm import tqdm
 from datetime import datetime
 import random
+import itertools
 
 # ------------------------
 # CONFIG
@@ -22,7 +23,7 @@ set_global_policy('mixed_float16')
 tf.config.threading.set_intra_op_parallelism_threads(4)
 tf.config.threading.set_inter_op_parallelism_threads(8)
 
-log_dir_base = "tensorboard_logs"
+log_dir_base = "tensorboard_logs_lstm"
 os.makedirs(log_dir_base, exist_ok=True)
 
 # ------------------------
@@ -39,47 +40,57 @@ y = dataset[target].values
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X)
 
-X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+X_seq = X_scaled.reshape((X_scaled.shape[0], X_scaled.shape[1], 1))  # [samples, timesteps, features]
+X_train, X_test, y_train, y_test = train_test_split(X_seq, y, test_size=0.2, random_state=42)
 
 # ------------------------
-# RANDOM HYPERPARAM SEARCH CONFIG
+# HYPERPARAM GRID
 # ------------------------
-epochs_options = [100, 200, 300]
-batch_size_options = [32, 64, 128]
-neurons_options = [
-    (64, 64),
-    (128, 64, 32),
-    (256, 128, 64),
-    (512, 256, 128),
-]
-activation_options = ['relu', 'elu', 'tanh']
-dropout_options = [0.0, 0.2, 0.3]
-learning_rate_options = [0.01, 0.005, 0.001, 0.0005]
+epochs_options = [200, 300]
+batch_size_options = [32, 64]
+neurons_options = [32, 64, 128]
+activation_options = ['tanh', 'relu', 'selu']
+dropout_options = [0.0, 0.2]
 batch_norm_options = [True, False]
+l2_reg_options = [0.0, 1e-4]
+learning_rate_options = [0.001, 0.0005]
 
-all_combinations = [(e, b, n, a, d, l, bn)
-                    for e in epochs_options
-                    for b in batch_size_options
-                    for n in neurons_options
-                    for a in activation_options
-                    for d in dropout_options
-                    for l in learning_rate_options
-                    for bn in batch_norm_options]
+all_combinations = list(itertools.product(
+    epochs_options,
+    batch_size_options,
+    activation_options,
+    neurons_options,
+    dropout_options,
+    batch_norm_options,
+    l2_reg_options,
+    learning_rate_options
+))
 
-# Увеличим кол-во тестов
-sampled_combinations = random.sample(all_combinations, min(60, len(all_combinations)))
+sampled_combinations = random.sample(all_combinations, min(50, len(all_combinations)))
 
 # ------------------------
-# MODEL TRAINING
+# MODEL TRAINING FUNCTION
 # ------------------------
-def run_model(epochs, batch_size, neurons, activation, dropout_rate, learning_rate, batch_norm):
+def run_lstm_model(epochs, batch_size, activation, units, dropout_rate, batch_norm, l2_reg, learning_rate):
     model = keras.Sequential()
 
-    for units in neurons:
-        model.add(layers.Dense(units, activation=activation))
-        if batch_norm:
-            model.add(layers.BatchNormalization())
-        model.add(layers.Dropout(dropout_rate))
+    # First LSTM Layer
+    model.add(layers.LSTM(units,
+                          return_sequences=True,
+                          activation=activation,
+                          kernel_regularizer=regularizers.l2(l2_reg) if l2_reg > 0 else None,
+                          input_shape=(X_train.shape[1], 1)))
+    if batch_norm:
+        model.add(layers.BatchNormalization())
+    model.add(layers.Dropout(dropout_rate))
+
+    # Second LSTM Layer
+    model.add(layers.LSTM(units // 2,
+                          activation=activation,
+                          kernel_regularizer=regularizers.l2(l2_reg) if l2_reg > 0 else None))
+    if batch_norm:
+        model.add(layers.BatchNormalization())
+    model.add(layers.Dropout(dropout_rate))
 
     model.add(layers.Dense(1))
 
@@ -110,9 +121,9 @@ def run_model(epochs, batch_size, neurons, activation, dropout_rate, learning_ra
 results = []
 
 def process_combination(params):
-    e, b, n, a, d, l, bn = params
-    metrics = run_model(e, b, n, a, d, l, bn)
-    return (e, b, n, a, d, l, bn, *metrics)
+    e, b, a, n, d, bn, l2, lr = params
+    metrics = run_lstm_model(e, b, a, n, d, bn, l2, lr)
+    return (e, b, a, n, d, bn, l2, lr, *metrics)
 
 with concurrent.futures.ThreadPoolExecutor() as executor:
     futures = [executor.submit(process_combination, params) for params in sampled_combinations]
@@ -120,15 +131,17 @@ with concurrent.futures.ThreadPoolExecutor() as executor:
         results.append(f.result())
 
 # ------------------------
-# SAVE AND PLOT RESULTS
+# SAVE RESULTS
 # ------------------------
-df_results = pd.DataFrame(results, columns=["Epochs", "Batch Size", "Neurons", "Activation",
-                                            "Dropout", "Learning Rate", "BatchNorm",
+df_results = pd.DataFrame(results, columns=["Epochs", "Batch Size", "Activation", "Neurons",
+                                            "Dropout", "BatchNorm", "L2", "Learning Rate",
                                             "MSE", "RMSE", "MAE", "MAPE", "R²"])
 df_results.sort_values(by="MSE", inplace=True)
-df_results.to_csv("mlp_res_10april_extended.csv", index=False)
+df_results.to_csv("lstm_res_gridsearch.csv", index=False)
 
-# Boxplot for visualizing metrics
+# ------------------------
+# PLOT RESULTS
+# ------------------------
 metrics = ["MSE", "RMSE", "MAE", "MAPE", "R²"]
 fig, axs = plt.subplots(3, 2, figsize=(14, 12))
 axs = axs.flatten()
@@ -139,10 +152,6 @@ axs[-1].axis('off')
 plt.tight_layout()
 plt.show()
 
-# Optionally plot MSE vs R² to see correlation
 sns.scatterplot(x="MSE", y="R²", data=df_results)
 plt.title("MSE vs R²")
 plt.show()
-
-# Epochs,Batch Size,Neurons,Activation,Dropout,Learning Rate,BatchNorm,MSE,RMSE,MAE,MAPE,R²
-# 300,32,"(64, 64)",tanh,0.0,0.001,False,7.583741330960513,2.7538593520658443,2.092010613207547,0.11488630627729347,0.7988801524022344
