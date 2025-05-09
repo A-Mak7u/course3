@@ -73,7 +73,9 @@ all_combinations = list(itertools.product(
     learning_rate_options
 ))
 
-sampled_combinations = random.sample(all_combinations, min(100, len(all_combinations)))
+
+print(f"Всего комбинаций: {len(all_combinations)}")
+sampled_combinations = all_combinations  # полный перебор всех комбинаций
 
 # ------------------------
 # MODEL TRAINING
@@ -124,20 +126,26 @@ def run_lstm_model(epochs, batch_size, activation, neurons, dropout, batch_norm,
 
     return mse, rmse, mae, mape, r2
 
+
 # ------------------------
 # PARALLEL EXECUTION
 # ------------------------
 results = []
+
 
 def process(params):
     e, b, a, n, d, bn, l2, lr = params
     metrics = run_lstm_model(e, b, a, n, d, bn, l2, lr)
     return (e, b, a, n, d, bn, l2, lr, *metrics)
 
+
 with concurrent.futures.ThreadPoolExecutor() as executor:
     futures = [executor.submit(process, p) for p in sampled_combinations]
-    for f in tqdm(concurrent.futures.as_completed(futures), total=len(futures)):
+
+    # tqdm для отслеживания прогресса
+    for f in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Обучение моделей"):
         results.append(f.result())
+
 
 # ------------------------
 # SAVE RESULTS
@@ -147,7 +155,7 @@ df_results = pd.DataFrame(results, columns=[
     "BatchNorm", "L2", "Learning Rate", "MSE", "RMSE", "MAE", "MAPE", "R²"
 ])
 df_results.sort_values(by="MSE", inplace=True)
-df_results.to_csv("lstm_grid_results.csv", index=False)
+df_results.to_csv("lstm_grid_results(full).csv", index=False)
 
 # ------------------------
 # VISUALIZATION

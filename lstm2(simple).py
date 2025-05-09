@@ -9,11 +9,7 @@ from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error, m
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers, callbacks, regularizers
-from tensorflow.keras.mixed_precision import set_global_policy
 import concurrent.futures
-from tqdm import tqdm
-from datetime import datetime
-import random
 import itertools
 
 # ------------------------
@@ -28,9 +24,6 @@ if tf.config.list_physical_devices('GPU'):
     print("GPU detected!")
 else:
     print("GPU not detected, using CPU only.")
-
-log_dir_base = "tensorboard_logs"
-os.makedirs(log_dir_base, exist_ok=True)
 
 # ------------------------
 # LOAD DATA
@@ -51,20 +44,15 @@ X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, 
 # ------------------------
 # RANDOM HYPERPARAM SEARCH CONFIG
 # ------------------------
-epochs_options = [200, 300, 400]
-batch_size_options = [32, 64, 128]
-neurons_options = [
-    (64, 64),
-    (128, 128),
-    (64, 64, 32),
-    (128, 64),
-    (64, 32, 16)
-]
-activation_options = ['elu', 'relu', 'tanh', 'selu', 'leaky_relu']
-dropout_options = [0.0, 0.1, 0.2, 0.3]
-learning_rate_options = [0.001, 0.0005, 0.0001]
-batch_norm_options = [True, False]
-l2_reg_options = [0.0, 1e-4, 1e-3]
+epochs_options = [50, 100]
+batch_size_options = [32, 64]
+activation_options = ['relu', 'tanh', 'swish']
+neurons_options = [(64, 32), (128, 64)]
+dropout_options = [0.0, 0.1]
+learning_rate_options = [0.001, 0.0005]
+batch_norm_options = [False, True]
+l2_reg_options = [0.0, 0.01]
+
 
 all_combinations = list(itertools.product(
     epochs_options,
@@ -77,8 +65,7 @@ all_combinations = list(itertools.product(
     learning_rate_options
 ))
 
-# Увеличим кол-во тестов
-sampled_combinations = random.sample(all_combinations, min(100, len(all_combinations)))
+sampled_combinations = all_combinations
 
 # ------------------------
 # LSTM MODEL DEFINITION
@@ -108,18 +95,14 @@ def run_model(epochs, batch_size, activation, neurons, dropout_rate, batch_norm,
     optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
     model.compile(optimizer=optimizer, loss="mse", metrics=["mae"])
 
-    log_dir = os.path.join(log_dir_base, datetime.now().strftime("%Y%m%d-%H%M%S"))
-    tensorboard_cb = callbacks.TensorBoard(log_dir=log_dir, histogram_freq=0)
     early_stop_cb = callbacks.EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
 
-    with tf.device('/GPU:0'):
-        history = model.fit(X_train, y_train, validation_data=(X_test, y_test),
-                            epochs=epochs, batch_size=batch_size,
-                            callbacks=[early_stop_cb, tensorboard_cb],
-                            verbose=0)  # Убираем вывод в консоль
+    history = model.fit(X_train, y_train, validation_data=(X_test, y_test),
+                        epochs=epochs, batch_size=batch_size,
+                        callbacks=[early_stop_cb],
+                        verbose=1)
 
-    with tf.device('/CPU:0'):
-        predictions = model.predict(X_test)
+    predictions = model.predict(X_test)
 
     mse = mean_squared_error(y_test, predictions)
     rmse = np.sqrt(mse)
@@ -133,20 +116,22 @@ def run_model(epochs, batch_size, activation, neurons, dropout_rate, batch_norm,
 
 
 # ------------------------
-# PARALLEL EXECUTION WITH PROGRESS BAR
+# PARALLEL EXECUTION
 # ------------------------
-
 def process_combination(params):
     e, b, a, n, d, bn, l2, lr = params
     metrics = run_model(e, b, a, n, d, bn, l2, lr)
     return (e, b, a, n, d, bn, l2, lr, *metrics)
 
-# Используем tqdm для отображения прогресс-бара
+
 results = []
 with concurrent.futures.ThreadPoolExecutor() as executor:
     futures = [executor.submit(process_combination, params) for params in sampled_combinations]
-    for f in tqdm(concurrent.futures.as_completed(futures), total=len(futures), desc="Progress"):
-        results.append(f.result())
+
+    for future in concurrent.futures.as_completed(futures):
+        results.append(future.result())
+
+
 
 # ------------------------
 # SAVE AND PLOT RESULTS
@@ -155,20 +140,30 @@ df_results = pd.DataFrame(results, columns=["Epochs", "Batch Size", "Activation"
                                             "Dropout", "BatchNorm", "L2", "Learning Rate",
                                             "MSE", "RMSE", "MAE", "MAPE", "R²"])
 df_results.sort_values(by="MSE", inplace=True)
-df_results.to_csv("lstm_res_random_search.csv", index=False)
+df_results.to_csv("lstm2(full)2.csv", index=False)
 
-# Boxplot for visualizing metrics
+# ------------------------
+# Визуализация метрик с помощью боксплотов
+# ------------------------
 metrics = ["MSE", "RMSE", "MAE", "MAPE", "R²"]
 fig, axs = plt.subplots(3, 2, figsize=(14, 12))
 axs = axs.flatten()
 for i, metric in enumerate(metrics):
     sns.boxplot(x="Activation", y=metric, data=df_results, ax=axs[i])
-    axs[i].set_title(f"{metric} by Activation")
-axs[-1].axis('off')
+    axs[i].set_title(f"{metric} по активации")
+axs[-1].axis('off')  # Убираем пустой график
 plt.tight_layout()
 plt.show()
 
-# Optionally plot MSE vs R² to see correlation
+# ------------------------
+# График зависимости MSE от R² для выявления корреляции
+# ------------------------
 sns.scatterplot(x="MSE", y="R²", data=df_results)
-plt.title("MSE vs R²")
+plt.title("Зависимость MSE от R²")
+plt.xlabel('MSE')
+plt.ylabel('R²')
 plt.show()
+
+
+
+
