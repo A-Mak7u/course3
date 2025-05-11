@@ -12,6 +12,18 @@ import os
 from torch.cuda.amp import GradScaler, autocast
 import uuid
 import concurrent.futures
+import random
+
+# Фиксация seed для воспроизводимости
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+set_seed(42)
 
 # Проверка CUDA
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -20,7 +32,7 @@ print(f"Using device: {device}")
 # Кастомный датасет
 class CustomDataset(TensorDataset):
     def __init__(self, X, y):
-        self.X = torch.tensor(X, dtype=torch.float32)  # [N, 11] для Linear слоя
+        self.X = torch.tensor(X, dtype=torch.float32)
         self.y = torch.tensor(y, dtype=torch.float32)
 
     def __len__(self):
@@ -33,28 +45,37 @@ class CustomDataset(TensorDataset):
 class LSTMModel(nn.Module):
     def __init__(self, input_size, hidden_size, num_layers, dropout, activation):
         super(LSTMModel, self).__init__()
-        self.linear = nn.Linear(input_size, hidden_size)  # Преобразование 11 признаков
-        self.lstm = nn.LSTM(hidden_size, hidden_size, num_layers, batch_first=True, dropout=dropout)
-        self.ln = nn.LayerNorm(hidden_size)  # LayerNorm для стабильности
+        self.linear = nn.Linear(input_size, hidden_size)
+        lstm_dropout = dropout if num_layers > 1 else 0
+        self.lstm = nn.LSTM(hidden_size, hidden_size, num_layers, batch_first=True, dropout=lstm_dropout)
+        self.ln = nn.LayerNorm(hidden_size)
         self.fc = nn.Linear(hidden_size, 1)
+
+        # Поддержка различных функций активации
         if activation == "relu":
             self.activation = nn.ReLU()
         elif activation == "tanh":
             self.activation = nn.Tanh()
-        else:  # leaky_relu
+        elif activation == "leaky_relu":
             self.activation = nn.LeakyReLU()
+        elif activation == "elu":
+            self.activation = nn.ELU()
+        else:
+            raise ValueError(f"Unsupported activation function: {activation}")
+
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
-        x = self.linear(x.unsqueeze(1))  # [N, 1, hidden_size]
-        h0 = torch.zeros(self.lstm.num_layers, x.size(0), self.lstm.hidden_size).to(device)
-        c0 = torch.zeros(self.lstm.num_layers, x.size(0), self.lstm.hidden_size).to(device)
+        x = self.linear(x.unsqueeze(1))
+        h0 = torch.zeros(self.lstm.num_layers, x.size(0), self.lstm.hidden_size).to(x.device)
+        c0 = torch.zeros(self.lstm.num_layers, x.size(0), self.lstm.hidden_size).to(x.device)
         out, _ = self.lstm(x, (h0, c0))
-        out = self.ln(out[:, -1, :])  # LayerNorm на последнем шаге
+        out = self.ln(out[:, -1, :])
         out = self.dropout(out)
         out = self.activation(out)
         out = self.fc(out)
         return out
+
 
 # Функция для загрузки данных
 def load_data(file_path, batch_size):
@@ -72,8 +93,8 @@ def load_data(file_path, batch_size):
     train_dataset = CustomDataset(X_train, y_train)
     test_dataset = CustomDataset(X_test, y_test)
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=4)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, pin_memory=True, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=0)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, pin_memory=True, num_workers=0)
     return train_loader, test_loader
 
 # Функция для вычисления метрик
@@ -106,7 +127,6 @@ def train_model(model, train_loader, test_loader, criterion, optimizer, schedule
             scaler.update()
             train_loss += loss.item()
 
-        # Валидация
         model.eval()
         val_loss = 0.0
         predictions, actuals = [], []
@@ -123,12 +143,10 @@ def train_model(model, train_loader, test_loader, criterion, optimizer, schedule
         train_loss /= len(train_loader)
         scheduler.step(val_loss)
 
-        # Метрики
         mse, rmse, mae, mape, r2 = compute_metrics(np.array(actuals), np.array(predictions))
         print(f"Epoch {epoch+1}/{epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, "
               f"MSE: {mse:.4f}, RMSE: {rmse:.4f}, MAE: {mae:.4f}, MAPE: {mape:.2f}%, R2: {r2:.4f}")
 
-        # Early Stopping
         if val_loss < best_loss:
             best_loss = val_loss
             patience_counter = 0
@@ -139,10 +157,9 @@ def train_model(model, train_loader, test_loader, criterion, optimizer, schedule
                 print("Early stopping triggered.")
                 break
 
-    # Загрузка лучшей модели
     model.load_state_dict(torch.load(best_model_path))
     os.remove(best_model_path)
-    return mse, rmse, mae, mape, r2
+    return mse, rmse, mae, mape, r2, model
 
 # Функция для запуска одного эксперимента
 def run_experiment(params, file_path):
@@ -151,45 +168,63 @@ def run_experiment(params, file_path):
 
     train_loader, test_loader = load_data(file_path, batch_size)
 
-    # Инициализация модели
     model = LSTMModel(input_size=11, hidden_size=hidden_size, num_layers=num_layers, dropout=dropout, activation=activation).to(device)
     criterion = nn.MSELoss()
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.1, patience=3)
 
-    # Обучение
-    metrics = train_model(model, train_loader, test_loader, criterion, optimizer, scheduler, epochs, patience=5)
-    return params + metrics
+    mse, rmse, mae, mape, r2, trained_model = train_model(model, train_loader, test_loader, criterion, optimizer, scheduler, epochs, patience=5)
+    # Промежуточное сохранение
+    result = params + (mse, rmse, mae, mape, r2)
+
+    return result, trained_model
 
 # Основная функция
 def main():
-    # Расширенный набор гиперпараметров
+
+    # param_grid = {
+    #     "batch_size": [64],
+    #     "activation": ["relu"],
+    #     "hidden_size": [128, 256],
+    #     "num_layers": [2],
+    #     "dropout": [0.1],
+    #     "learning_rate": [0.001, 0.0005],
+    #     "epochs": [100]
+    # }
+
+
     param_grid = {
-        "batch_size": [64],
-        "activation": ["relu", "tanh"],
-        "hidden_size": [128, 256],
-        "num_layers": [2],
-        "dropout": [0.1],
-        "learning_rate": [0.001, 0.0005],
+        "batch_size": [32, 64],
+        "activation": ["relu", "leaky_relu", "elu"],
+        "hidden_size": [192, 256],
+        "num_layers": [2, 3],
+        "dropout": [0.1, 0.2],
+        "learning_rate": [0.0003, 0.0005, 0.0007],
         "epochs": [100]
     }
+
     all_combinations = list(itertools.product(*param_grid.values()))
     results = []
+    best_mse = float("inf")
 
-    # Загрузка данных
     file_path = "LST_final_TRUE.csv"
 
-    # Параллельное выполнение экспериментов
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
         futures = [executor.submit(run_experiment, params, file_path) for params in all_combinations]
         for future in concurrent.futures.as_completed(futures):
-            results.append(future.result())
+            params_metrics, model = future.result()
+            results.append(params_metrics)
+            mse = params_metrics[7]
+            if mse < best_mse:
+                best_mse = mse
 
-    # Сохранение результатов
-    df_results = pd.DataFrame(results, columns=["Batch Size", "Activation", "Hidden Size", "Num Layers", "Dropout", "Learning Rate", "Epochs",
-                                               "MSE", "RMSE", "MAE", "MAPE", "R2"])
+    # Сохранение всех результатов в CSV, отсортированных по MSE
+    df_results = pd.DataFrame(results, columns=["Batch Size", "Activation", "Hidden Size", "Num Layers", "Dropout",
+                                               "Learning Rate", "Epochs", "MSE", "RMSE", "MAE", "MAPE", "R2"])
     df_results.sort_values(by="MSE", inplace=True)
-    df_results.to_csv("lstm3.csv", index=False)
+    df_results.to_csv("lstm3_2.csv", index=False)
 
 if __name__ == "__main__":
     main()
+
+    # ЛУЧШАЯ!!!!!!!!!!!!!!!!!!!!!

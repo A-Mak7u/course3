@@ -12,6 +12,18 @@ import os
 from torch.cuda.amp import GradScaler, autocast
 import uuid
 import concurrent.futures
+import random
+
+# Фиксация seed для воспроизводимости
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+set_seed(42)
 
 # Проверка CUDA
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -72,8 +84,9 @@ def load_data(file_path, batch_size):
     train_dataset = CustomDataset(X_train, y_train)
     test_dataset = CustomDataset(X_test, y_test)
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=4)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, pin_memory=True, num_workers=4)
+    # num_workers=2 для снижения нагрузки на CPU; уменьшите до 0, если CPU перегружен
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=2)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, pin_memory=True, num_workers=2)
     return train_loader, test_loader
 
 # Функция для вычисления метрик
@@ -142,7 +155,7 @@ def train_model(model, train_loader, test_loader, criterion, optimizer, schedule
     # Загрузка лучшей модели
     model.load_state_dict(torch.load(best_model_path))
     os.remove(best_model_path)
-    return mse, rmse, mae, mape, r2
+    return mse, rmse, mae, mape, r2, model
 
 # Функция для запуска одного эксперимента
 def run_experiment(params, file_path):
@@ -158,38 +171,57 @@ def run_experiment(params, file_path):
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.1, patience=3)
 
     # Обучение
-    metrics = train_model(model, train_loader, test_loader, criterion, optimizer, scheduler, epochs, patience=5)
-    return params + metrics
+    mse, rmse, mae, mape, r2, trained_model = train_model(model, train_loader, test_loader, criterion, optimizer, scheduler, epochs, patience=5)
+    return params + (mse, rmse, mae, mape, r2), trained_model
 
 # Основная функция
 def main():
     # Расширенный набор гиперпараметров
     param_grid = {
-        "batch_size": [64],
-        "activation": ["relu", "tanh"],
-        "hidden_size": [128, 256],
-        "num_layers": [2],
-        "dropout": [0.1],
-        "learning_rate": [0.001, 0.0005],
-        "epochs": [100]
+        "batch_size": [32, 64, 128],
+        "activation": ["relu", "tanh", "leaky_relu"],
+        "hidden_size": [64, 128, 256, 512],
+        "num_layers": [1, 2, 3],
+        "dropout": [0.0, 0.1, 0.2],
+        "learning_rate": [0.01, 0.001, 0.0005],
+        "epochs": [50, 100]
     }
     all_combinations = list(itertools.product(*param_grid.values()))
     results = []
+    best_mse = float("inf")
+    best_model = None
+    target_mse = 5.557594  # Целевой MSE для сравнения
 
     # Загрузка данных
     file_path = "LST_final_TRUE.csv"
 
     # Параллельное выполнение экспериментов
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
         futures = [executor.submit(run_experiment, params, file_path) for params in all_combinations]
         for future in concurrent.futures.as_completed(futures):
-            results.append(future.result())
+            params_metrics, model = future.result()
+            results.append(params_metrics)
+            mse = params_metrics[7]  # MSE находится на 7-й позиции
+            if mse < best_mse:
+                best_mse = mse
+                best_model = model
 
     # Сохранение результатов
-    df_results = pd.DataFrame(results, columns=["Batch Size", "Activation", "Hidden Size", "Num Layers", "Dropout", "Learning Rate", "Epochs",
-                                               "MSE", "RMSE", "MAE", "MAPE", "R2"])
+    df_results = pd.DataFrame(results, columns=["Batch Size", "Activation", "Hidden Size", "Num Layers", "Dropout",
+                                               "Learning Rate", "Epochs", "MSE", "RMSE", "MAE", "MAPE", "R2"])
     df_results.sort_values(by="MSE", inplace=True)
-    df_results.to_csv("lstm3.csv", index=False)
+    df_results.to_csv("lstm3_1.csv", index=False)
+
+    # Сохранение лучшей модели
+    mse_threshold = 0.1
+    if abs(best_mse - target_mse) < mse_threshold:
+        final_model_path = "final_best_lstm.pth"
+        torch.save(best_model.state_dict(), final_model_path)
+        print(f"Best model saved to {final_model_path} with MSE={best_mse:.6f}")
+    else:
+        print(f"Best MSE={best_mse:.6f} not close enough to target MSE={target_mse:.6f}, model not saved.")
 
 if __name__ == "__main__":
     main()
+
+
