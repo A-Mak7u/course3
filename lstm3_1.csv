@@ -1,0 +1,2 @@
+Epoch 100/100, Train Loss: 4.5609, Val Loss: 5.8903, MSE: 5.8740, RMSE: 2.4236, MAE: 1.8186, MAPE: 10.03%, R2: 0.8442
+Testing: bs=32, act=relu, hs=64, nl=2, do=0.1, lr=0.001, ep=100
