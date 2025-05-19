@@ -200,7 +200,7 @@ def main():
         "num_layers": [2, 3],
         "dropout": [0.1, 0.2],
         "learning_rate": [0.0003, 0.0005, 0.0007],
-        "epochs": [100]
+        "epochs": [200]
     }
 
     all_combinations = list(itertools.product(*param_grid.values()))
@@ -222,7 +222,7 @@ def main():
     df_results = pd.DataFrame(results, columns=["Batch Size", "Activation", "Hidden Size", "Num Layers", "Dropout",
                                                "Learning Rate", "Epochs", "MSE", "RMSE", "MAE", "MAPE", "R2"])
     df_results.sort_values(by="MSE", inplace=True)
-    df_results.to_csv("lstm3_2.csv", index=False)
+    df_results.to_csv("lstm3_2(200).csv", index=False)
 
 if __name__ == "__main__":
     main()
