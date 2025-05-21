@@ -16,9 +16,6 @@ from datetime import datetime
 import random
 import itertools
 
-# ------------------------
-# CONFIG
-# ------------------------
 set_global_policy('mixed_float16')
 tf.config.threading.set_intra_op_parallelism_threads(4)
 tf.config.threading.set_inter_op_parallelism_threads(8)
@@ -26,9 +23,6 @@ tf.config.threading.set_inter_op_parallelism_threads(8)
 log_dir_base = "tensorboard_logs"
 os.makedirs(log_dir_base, exist_ok=True)
 
-# ------------------------
-# LOAD DATA
-# ------------------------
 dataset = pd.read_csv("LST_final_TRUE.csv")
 features = ["H", "TWI", "Aspect", "Hillshade", "Roughness", "Slope",
             "Temperature_merra_1000hpa", "Time", "DayOfYear", "X", "Y"]
@@ -42,9 +36,6 @@ X_scaled = scaler.fit_transform(X)
 
 X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
 
-# ------------------------
-# RANDOM HYPERPARAM SEARCH CONFIG
-# ------------------------
 epochs_options = [200, 300, 400]
 batch_size_options = [32, 64, 128]
 neurons_options = [
@@ -71,12 +62,8 @@ all_combinations = list(itertools.product(
     learning_rate_options
 ))
 
-# Увеличим кол-во тестов
 sampled_combinations = random.sample(all_combinations, min(100, len(all_combinations)))
 
-# ------------------------
-# MODEL TRAINING
-# ------------------------
 def run_model(epochs, batch_size, activation, neurons, dropout_rate, batch_norm, l2_reg, learning_rate):
     model = keras.Sequential()
 
@@ -117,9 +104,6 @@ def run_model(epochs, batch_size, activation, neurons, dropout_rate, batch_norm,
     return mse, rmse, mae, mape, r2
 
 
-# ------------------------
-# PARALLEL EXECUTION
-# ------------------------
 results = []
 
 def process_combination(params):
@@ -132,16 +116,12 @@ with concurrent.futures.ThreadPoolExecutor() as executor:
     for f in tqdm(concurrent.futures.as_completed(futures), total=len(futures)):
         results.append(f.result())
 
-# ------------------------
-# SAVE AND PLOT RESULTS
-# ------------------------
 df_results = pd.DataFrame(results, columns=["Epochs", "Batch Size", "Activation", "Neurons",
                                             "Dropout", "BatchNorm", "L2", "Learning Rate",
                                             "MSE", "RMSE", "MAE", "MAPE", "R²"])
 df_results.sort_values(by="MSE", inplace=True)
 df_results.to_csv("mlp_res_10april_extended.csv", index=False)
 
-# Boxplot for visualizing metrics
 metrics = ["MSE", "RMSE", "MAE", "MAPE", "R²"]
 fig, axs = plt.subplots(3, 2, figsize=(14, 12))
 axs = axs.flatten()
@@ -152,7 +132,6 @@ axs[-1].axis('off')
 plt.tight_layout()
 plt.show()
 
-# Optionally plot MSE vs R² to see correlation
 sns.scatterplot(x="MSE", y="R²", data=df_results)
 plt.title("MSE vs R²")
 plt.show()

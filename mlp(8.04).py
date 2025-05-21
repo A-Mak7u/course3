@@ -14,14 +14,11 @@ import concurrent.futures
 from tqdm import tqdm
 from datetime import datetime
 
-# Set mixed precision
 set_global_policy('mixed_float16')
 
-# Threading optimization (adjust based on your CPU)
 tf.config.threading.set_intra_op_parallelism_threads(12)
 tf.config.threading.set_inter_op_parallelism_threads(12)
 
-# Load data
 dataset = pd.read_csv("LST_final_TRUE.csv")
 features = ["H", "TWI", "Aspect", "Hillshade", "Roughness", "Slope",
             "Temperature_merra_1000hpa", "Time", "DayOfYear", "X", "Y"]
@@ -35,7 +32,6 @@ X_scaled = scaler.fit_transform(X)
 
 X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
 
-# Hyperparameter options
 epochs_options = [100, 150]
 batch_size_options = [32, 64]
 neurons_options = [(128, 64, 32), (256, 128, 64)]
@@ -80,7 +76,6 @@ def run_model(epochs, batch_size, neurons, activation, dropout_rate, learning_ra
 
     return mse, rmse, mae, mape, r2
 
-# Prepare for parallel execution
 results = []
 param_combinations = [(e, b, n, a, d, l, bn)
                       for e in epochs_options
@@ -101,14 +96,12 @@ with concurrent.futures.ThreadPoolExecutor() as executor:
     for f in tqdm(concurrent.futures.as_completed(futures), total=len(futures)):
         results.append(f.result())
 
-# Save results
 df_results = pd.DataFrame(results, columns=["Epochs", "Batch Size", "Neurons", "Activation",
                                             "Dropout", "Learning Rate", "BatchNorm",
                                             "MSE", "RMSE", "MAE", "MAPE", "R²"])
 df_results.sort_values(by="MSE", inplace=True)
 df_results.to_csv("optimized_mlp_results.csv", index=False)
 
-# Visualize
 metrics = ["MSE", "RMSE", "MAE", "MAPE", "R²"]
 fig, axs = plt.subplots(3, 2, figsize=(14, 12))
 axs = axs.flatten()

@@ -16,7 +16,6 @@ import random
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# Фиксация seed для воспроизводимости
 def set_seed(seed=42):
     random.seed(seed)
     np.random.seed(seed)
@@ -27,11 +26,9 @@ def set_seed(seed=42):
 
 set_seed(42)
 
-# Проверка CUDA
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
-# Кастомный датасет
 class CustomDataset(TensorDataset):
     def __init__(self, X, y):
         self.X = torch.tensor(X, dtype=torch.float32)
@@ -43,7 +40,6 @@ class CustomDataset(TensorDataset):
     def __getitem__(self, idx):
         return self.X[idx], self.y[idx]
 
-# Модель LSTM
 class LSTMModel(nn.Module):
     def __init__(self, input_size, hidden_size, num_layers, dropout, activation):
         super(LSTMModel, self).__init__()
@@ -78,7 +74,6 @@ class LSTMModel(nn.Module):
         out = self.fc(out)
         return out
 
-# Функция для загрузки данных
 def load_data(file_path, batch_size):
     dataset = pd.read_csv(file_path)
     features = ["H", "TWI", "Aspect", "Hillshade", "Roughness", "Slope",
@@ -98,7 +93,6 @@ def load_data(file_path, batch_size):
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, pin_memory=True, num_workers=0)
     return train_loader, test_loader, y_test
 
-# Функция для вычисления метрик
 def compute_metrics(y_true, y_pred):
     mse = mean_squared_error(y_true, y_pred)
     rmse = np.sqrt(mse)
@@ -107,7 +101,6 @@ def compute_metrics(y_true, y_pred):
     r2 = r2_score(y_true, y_pred)
     return mse, rmse, mae, mape, r2
 
-# Функция обучения с сохранением истории потерь
 def train_model(model, train_loader, test_loader, criterion, optimizer, scheduler, epochs, patience):
     scaler = GradScaler()
     best_loss = float("inf")
@@ -170,11 +163,9 @@ def train_model(model, train_loader, test_loader, criterion, optimizer, schedule
     os.remove(best_model_path)
     return mse, rmse, mae, mape, r2, model, train_losses, val_losses, best_predictions, best_actuals
 
-# Функция для визуализации с подписями на русском
 def plot_visualizations(train_losses, val_losses, predictions, actuals, results_df, output_dir="plots"):
     os.makedirs(output_dir, exist_ok=True)
 
-    # 1. График потерь
     plt.figure(figsize=(10, 6))
     plt.plot(train_losses, label="Потери на тренировке")
     plt.plot(val_losses, label="Потери на валидации")
@@ -186,7 +177,6 @@ def plot_visualizations(train_losses, val_losses, predictions, actuals, results_
     plt.savefig(os.path.join(output_dir, "график_потерь.png"))
     plt.close()
 
-    # 2. График предсказанных vs фактических значений
     plt.figure(figsize=(10, 6))
     plt.scatter(actuals, predictions, alpha=0.5)
     plt.plot([min(actuals), max(actuals)], [min(actuals), max(actuals)], 'r--', lw=2)
@@ -197,7 +187,6 @@ def plot_visualizations(train_losses, val_losses, predictions, actuals, results_
     plt.savefig(os.path.join(output_dir, "предсказания_против_фактических.png"))
     plt.close()
 
-    # 3. Бар-график метрик для топ-5 комбинаций
     top_5 = results_df.head(5)
     metrics = ["MSE", "RMSE", "MAE", "MAPE", "R2"]
     plt.figure(figsize=(12, 6))
@@ -214,7 +203,6 @@ def plot_visualizations(train_losses, val_losses, predictions, actuals, results_
     plt.savefig(os.path.join(output_dir, "сравнение_метрик.png"))
     plt.close()
 
-    # 4. Зависимость MSE от learning_rate
     plt.figure(figsize=(10, 6))
     sns.boxplot(x="Learning Rate", y="MSE", data=results_df)
     plt.xlabel("Скорость обучения")
@@ -224,7 +212,6 @@ def plot_visualizations(train_losses, val_losses, predictions, actuals, results_
     plt.savefig(os.path.join(output_dir, "mse_по_скорости_обучения.png"))
     plt.close()
 
-# Функция для запуска одного эксперимента
 def run_experiment(params, file_path):
     batch_size, activation, hidden_size, num_layers, dropout, lr, epochs = params
     print(f"Testing: bs={batch_size}, act={activation}, hs={hidden_size}, nl={num_layers}, do={dropout}, lr={lr}, ep={epochs}")
@@ -242,15 +229,25 @@ def run_experiment(params, file_path):
     result = params + (mse, rmse, mae, mape, r2)
     return result, trained_model, train_losses, val_losses, predictions, actuals, y_test
 
-# Основная функция
 def main():
+    # param_grid = {
+    #     "batch_size": [32, 64],
+    #     "activation": ["relu", "leaky_relu", "elu"],
+    #     "hidden_size": [192, 256],
+    #     "num_layers": [2, 3],
+    #     "dropout": [0.1, 0.2],
+    #     "learning_rate": [0.0003, 0.0005, 0.0007],
+    #     "epochs": [100]
+    # }
+
+
     param_grid = {
         "batch_size": [32, 64],
         "activation": ["relu", "leaky_relu", "elu"],
-        "hidden_size": [192, 256],
+        "hidden_size": [192, 256, 384],
         "num_layers": [2, 3],
         "dropout": [0.1, 0.2],
-        "learning_rate": [0.0003, 0.0005, 0.0007],
+        "learning_rate": [0.0001, 0.0003, 0.0005, 0.0007],
         "epochs": [100]
     }
 
@@ -277,17 +274,16 @@ def main():
                 best_predictions = predictions
                 best_actuals = actuals
 
-    # Сохранение результатов в CSV
     df_results = pd.DataFrame(results, columns=["Batch Size", "Activation", "Hidden Size", "Num Layers", "Dropout",
                                                "Learning Rate", "Epochs", "MSE", "RMSE", "MAE", "MAPE", "R2"])
     df_results.sort_values(by="MSE", inplace=True)
-    df_results.to_csv("lstm3_4(1).csv", index=False)
+    df_results.to_csv("lstm3_4(2).csv", index=False)
 
-    # Генерация визуализаций
     plot_visualizations(best_train_losses, best_val_losses, best_predictions, best_actuals, df_results)
 
 if __name__ == "__main__":
     main()
 
 
-    # ЛУШЧАЯ!!!!!!!! С ГРАФИКАМИ
+
+    # лушчая с графиками!!!!

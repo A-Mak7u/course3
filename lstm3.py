@@ -13,11 +13,9 @@ from torch.cuda.amp import GradScaler, autocast
 import uuid
 import concurrent.futures
 
-# Проверка CUDA
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
-# Кастомный датасет
 class CustomDataset(TensorDataset):
     def __init__(self, X, y):
         self.X = torch.tensor(X, dtype=torch.float32)  # [N, 11] для Linear слоя
@@ -29,7 +27,6 @@ class CustomDataset(TensorDataset):
     def __getitem__(self, idx):
         return self.X[idx], self.y[idx]
 
-# Модель LSTM
 class LSTMModel(nn.Module):
     def __init__(self, input_size, hidden_size, num_layers, dropout, activation):
         super(LSTMModel, self).__init__()
@@ -56,7 +53,6 @@ class LSTMModel(nn.Module):
         out = self.fc(out)
         return out
 
-# Функция для загрузки данных
 def load_data(file_path, batch_size):
     dataset = pd.read_csv(file_path)
     features = ["H", "TWI", "Aspect", "Hillshade", "Roughness", "Slope",
@@ -76,7 +72,6 @@ def load_data(file_path, batch_size):
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, pin_memory=True, num_workers=4)
     return train_loader, test_loader
 
-# Функция для вычисления метрик
 def compute_metrics(y_true, y_pred):
     mse = mean_squared_error(y_true, y_pred)
     rmse = np.sqrt(mse)
@@ -85,7 +80,6 @@ def compute_metrics(y_true, y_pred):
     r2 = r2_score(y_true, y_pred)
     return mse, rmse, mae, mape, r2
 
-# Функция обучения
 def train_model(model, train_loader, test_loader, criterion, optimizer, scheduler, epochs, patience):
     scaler = GradScaler()
     best_loss = float("inf")
@@ -106,7 +100,6 @@ def train_model(model, train_loader, test_loader, criterion, optimizer, schedule
             scaler.update()
             train_loss += loss.item()
 
-        # Валидация
         model.eval()
         val_loss = 0.0
         predictions, actuals = [], []
@@ -128,7 +121,6 @@ def train_model(model, train_loader, test_loader, criterion, optimizer, schedule
         print(f"Epoch {epoch+1}/{epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, "
               f"MSE: {mse:.4f}, RMSE: {rmse:.4f}, MAE: {mae:.4f}, MAPE: {mape:.2f}%, R2: {r2:.4f}")
 
-        # Early Stopping
         if val_loss < best_loss:
             best_loss = val_loss
             patience_counter = 0
@@ -139,31 +131,25 @@ def train_model(model, train_loader, test_loader, criterion, optimizer, schedule
                 print("Early stopping triggered.")
                 break
 
-    # Загрузка лучшей модели
     model.load_state_dict(torch.load(best_model_path))
     os.remove(best_model_path)
     return mse, rmse, mae, mape, r2
 
-# Функция для запуска одного эксперимента
 def run_experiment(params, file_path):
     batch_size, activation, hidden_size, num_layers, dropout, lr, epochs = params
     print(f"Testing: bs={batch_size}, act={activation}, hs={hidden_size}, nl={num_layers}, do={dropout}, lr={lr}, ep={epochs}")
 
     train_loader, test_loader = load_data(file_path, batch_size)
 
-    # Инициализация модели
     model = LSTMModel(input_size=11, hidden_size=hidden_size, num_layers=num_layers, dropout=dropout, activation=activation).to(device)
     criterion = nn.MSELoss()
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.1, patience=3)
 
-    # Обучение
     metrics = train_model(model, train_loader, test_loader, criterion, optimizer, scheduler, epochs, patience=5)
     return params + metrics
 
-# Основная функция
 def main():
-    # Расширенный набор гиперпараметров
     param_grid = {
         "batch_size": [64],
         "activation": ["relu", "tanh"],
@@ -176,16 +162,13 @@ def main():
     all_combinations = list(itertools.product(*param_grid.values()))
     results = []
 
-    # Загрузка данных
     file_path = "LST_final_TRUE.csv"
 
-    # Параллельное выполнение экспериментов
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         futures = [executor.submit(run_experiment, params, file_path) for params in all_combinations]
         for future in concurrent.futures.as_completed(futures):
             results.append(future.result())
 
-    # Сохранение результатов
     df_results = pd.DataFrame(results, columns=["Batch Size", "Activation", "Hidden Size", "Num Layers", "Dropout", "Learning Rate", "Epochs",
                                                "MSE", "RMSE", "MAE", "MAPE", "R2"])
     df_results.sort_values(by="MSE", inplace=True)

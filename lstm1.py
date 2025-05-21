@@ -11,7 +11,6 @@ from tensorflow.keras import layers, callbacks
 from tqdm import tqdm
 import itertools
 
-# Оптимизация вычислений
 from tensorflow.keras import mixed_precision
 mixed_precision.set_global_policy("mixed_float16")
 gpu_devices = tf.config.experimental.list_physical_devices('GPU')
@@ -22,26 +21,21 @@ if gpu_devices:
     except RuntimeError as e:
         print(e)
 
-# === Загрузка и подготовка данных ===
 df = pd.read_csv("LST_final_TRUE.csv")
 target_col = "T_rp5"
 
-# Фильтрация выбросов
 q_low = df[target_col].quantile(0.07)
 q_high = df[target_col].quantile(0.93)
 df = df[(df[target_col] >= q_low) & (df[target_col] <= q_high)]
 
-# Признаки и целевая переменная
 X = df.drop(columns=["T_rp5"])
 y = df["T_rp5"]
 
-# Масштабирование
 scaler_X = MinMaxScaler()
 X_scaled = scaler_X.fit_transform(X)
 scaler_y = MinMaxScaler()
 y_scaled = scaler_y.fit_transform(y.values.reshape(-1, 1))
 
-# Формирование временных окон (3 шага в прошлое)
 def create_sequences(X, y, time_steps=3):
     Xs, ys = [], []
     for i in range(len(X) - time_steps):
@@ -52,7 +46,6 @@ def create_sequences(X, y, time_steps=3):
 X_seq, y_seq = create_sequences(X_scaled, y_scaled)
 X_train, X_test, y_train, y_test = train_test_split(X_seq, y_seq, test_size=0.2, random_state=42, shuffle=False)
 
-# === Гиперпараметры ===
 param_grid = {
     'units': [64, 128],
     'dropout': [0.1, 0.2],
@@ -61,7 +54,6 @@ param_grid = {
     'epochs': [50, 100]
 }
 
-# === Функция создания модели ===
 def build_model(input_shape, units, dropout, lr):
     model = keras.Sequential([
         layers.Input(shape=input_shape),
@@ -75,7 +67,6 @@ def build_model(input_shape, units, dropout, lr):
     model.compile(optimizer=opt, loss='mse', metrics=['mae'])
     return model
 
-# === Поиск по сетке ===
 results = []
 progress = list(itertools.product(*param_grid.values()))
 total = len(progress)
@@ -116,10 +107,7 @@ for units, dropout, lr, batch_size, epochs in tqdm(progress, total=total, desc="
         'R2': r2
     })
 
-# === Сохранение результатов ===
 results_df = pd.DataFrame(results)
 results_df = results_df.sort_values(by="R2", ascending=False)
 today_str = date.today().isoformat()
 results_df.to_csv(f"lstm_grid_results_{today_str}.csv", index=False)
-
-print(f"\nГотово. Лучшие результаты сохранены в lstm_grid_results_{today_str}.csv")

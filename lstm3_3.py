@@ -22,7 +22,6 @@ import uuid
 import concurrent.futures
 import random
 
-# Seed for reproducibility
 def set_seed(seed=42):
     random.seed(seed)
     np.random.seed(seed)

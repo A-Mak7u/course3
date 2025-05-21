@@ -13,22 +13,15 @@ from tensorflow.keras.mixed_precision import set_global_policy
 import concurrent.futures
 import itertools
 
-# ------------------------
-# CONFIG
-# ------------------------
-set_global_policy('mixed_float16')  # Для использования mixed precision (можно отключить)
-tf.config.threading.set_intra_op_parallelism_threads(8)  # Оптимизация потоков CPU
+set_global_policy('mixed_float16')
+tf.config.threading.set_intra_op_parallelism_threads(8)
 tf.config.threading.set_inter_op_parallelism_threads(12)
 
-# Убедитесь, что доступны GPU устройства
 if tf.config.list_physical_devices('GPU'):
     print("GPU detected!")
 else:
     print("GPU not detected, using CPU only.")
 
-# ------------------------
-# LOAD DATA
-# ------------------------
 dataset = pd.read_csv("LST_final_TRUE.csv")
 features = ["H", "TWI", "Aspect", "Hillshade", "Roughness", "Slope",
             "Temperature_merra_1000hpa", "Time", "DayOfYear", "X", "Y"]
@@ -42,9 +35,6 @@ X_scaled = scaler.fit_transform(X)
 
 X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
 
-# ------------------------
-# RANDOM HYPERPARAM SEARCH CONFIG
-# ------------------------
 epochs_options = [10]
 batch_size_options = [32, 64]
 activation_options = ['relu', 'tanh']
@@ -65,12 +55,8 @@ all_combinations = list(itertools.product(
     learning_rate_options
 ))
 
-# Увеличим кол-во тестов
 sampled_combinations = all_combinations
 
-# ------------------------
-# LSTM MODEL DEFINITION
-# ------------------------
 def run_model(epochs, batch_size, activation, neurons, dropout_rate, batch_norm, l2_reg, learning_rate):
     print(f"Запуск модели с параметрами: epochs={epochs}, batch_size={batch_size}, activation={activation}, "
           f"neurons={neurons}, dropout={dropout_rate}, batch_norm={batch_norm}, l2={l2_reg}, lr={learning_rate}", flush=True)
@@ -117,11 +103,6 @@ def run_model(epochs, batch_size, activation, neurons, dropout_rate, batch_norm,
 
     return mse, rmse, mae, mape, r2
 
-
-# ------------------------
-# PARALLEL EXECUTION
-# ------------------------
-
 def process_combination(params):
     e, b, a, n, d, bn, l2, lr = params
     metrics = run_model(e, b, a, n, d, bn, l2, lr)
@@ -133,16 +114,12 @@ with concurrent.futures.ThreadPoolExecutor() as executor:
     for f in concurrent.futures.as_completed(futures):
         results.append(f.result())
 
-# ------------------------
-# SAVE AND PLOT RESULTS
-# ------------------------
 df_results = pd.DataFrame(results, columns=["Epochs", "Batch Size", "Activation", "Neurons",
                                             "Dropout", "BatchNorm", "L2", "Learning Rate",
                                             "MSE", "RMSE", "MAE", "MAPE", "R²"])
 df_results.sort_values(by="MSE", inplace=True)
 df_results.to_csv("lstm2(full)2.csv", index=False)
 
-# Boxplot for visualizing metrics
 metrics = ["MSE", "RMSE", "MAE", "MAPE", "R²"]
 fig, axs = plt.subplots(3, 2, figsize=(14, 12))
 axs = axs.flatten()
@@ -153,7 +130,6 @@ axs[-1].axis('off')
 plt.tight_layout()
 plt.show()
 
-# Optionally plot MSE vs R² to see correlation
 sns.scatterplot(x="MSE", y="R²", data=df_results)
 plt.title("MSE vs R²")
 plt.show()
